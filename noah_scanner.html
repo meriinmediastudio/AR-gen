@@ -1,0 +1,1069 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>NOAH Scanner v.13</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        /* Сброс стилей и базовая настройка */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            background: #000;
+            color: #00ff00;
+            font-family: 'Courier New', monospace;
+            overflow: hidden;
+            height: 100vh;
+            width: 100vw;
+        }
+        
+        /* Контейнер камеры */
+        #camera-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+            background: #000;
+        }
+        
+        #video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+            background: #111;
+        }
+        
+        /* Слой AR-наложения */
+        #ar-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 2;
+            pointer-events: none;
+        }
+        
+        /* Интерфейс сканера */
+        #scanner-ui {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 3;
+            display: flex;
+            flex-direction: column;
+            pointer-events: none;
+        }
+        
+        /* Верхняя панель */
+        #top-panel {
+            padding: 15px;
+            background: rgba(0, 0, 0, 0.7);
+            border-bottom: 1px solid #00ff00;
+        }
+        
+        #scanner-title {
+            font-size: 12px;
+            letter-spacing: 2px;
+            opacity: 0.7;
+        }
+        
+        #status-line {
+            font-size: 14px;
+            margin-top: 5px;
+        }
+        
+        /* Эффект помех (скан-линии) */
+        #scanlines {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 4;
+            background: repeating-linear-gradient(
+                0deg,
+                rgba(0, 0, 0, 0.1) 0px,
+                rgba(0, 0, 0, 0.1) 1px,
+                transparent 1px,
+                transparent 2px
+            );
+            pointer-events: none;
+            opacity: 0.3;
+        }
+        
+        /* Шум поверх изображения */
+        #noise {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 5;
+            opacity: 0.05;
+            pointer-events: none;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%' height='100%' filter='url(%23noise)'/%3E%3C/svg%3E");
+        }
+        
+        /* Нижняя панель */
+        #bottom-panel {
+            margin-top: auto;
+            padding: 15px;
+            background: rgba(0, 0, 0, 0.7);
+            border-top: 1px solid #00ff00;
+        }
+        
+        #instructions {
+            font-size: 12px;
+            text-align: center;
+            opacity: 0.8;
+        }
+        
+        /* Прицел в центре */
+        #crosshair {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 100px;
+            height: 100px;
+            z-index: 10;
+            pointer-events: none;
+        }
+        
+        .crosshair-corner {
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            border-color: #00ff00;
+            border-style: solid;
+            border-width: 0;
+        }
+        
+        .crosshair-corner.tl { top: 0; left: 0; border-top-width: 2px; border-left-width: 2px; }
+        .crosshair-corner.tr { top: 0; right: 0; border-top-width: 2px; border-right-width: 2px; }
+        .crosshair-corner.bl { bottom: 0; left: 0; border-bottom-width: 2px; border-left-width: 2px; }
+        .crosshair-corner.br { bottom: 0; right: 0; border-bottom-width: 2px; border-right-width: 2px; }
+        
+        /* Прогресс-бар захвата */
+        #capture-progress {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, calc(-50% + 70px));
+            width: 120px;
+            height: 4px;
+            background: rgba(0, 255, 0, 0.2);
+            z-index: 10;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+        
+        #capture-progress-fill {
+            height: 100%;
+            background: #00ff00;
+            width: 0%;
+            transition: width 0.1s linear;
+        }
+        
+        /* AR-объект (узел NOAH) */
+        .noah-node {
+            position: absolute;
+            width: 80px;
+            height: 80px;
+            pointer-events: none;
+            animation: float 3s ease-in-out infinite;
+        }
+        
+        @keyframes float {
+            0%, 100% { transform: translateY(0) rotate(0deg); }
+            50% { transform: translateY(-10px) rotate(5deg); }
+        }
+        
+        .noah-node svg {
+            width: 100%;
+            height: 100%;
+            filter: drop-shadow(0 0 10px #00ff00);
+        }
+        
+        /* Глитч-эффект */
+        @keyframes glitch {
+            0% { transform: translate(0); }
+            20% { transform: translate(-2px, 2px); }
+            40% { transform: translate(2px, -2px); }
+            60% { transform: translate(-2px, -2px); }
+            80% { transform: translate(2px, 2px); }
+            100% { transform: translate(0); }
+        }
+        
+        .glitch {
+            animation: glitch 0.1s linear infinite;
+        }
+        
+        /* Экран мини-игры (ввод кода) */
+        #minigame-screen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.95);
+            z-index: 100;
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        
+        #minigame-title {
+            font-size: 14px;
+            letter-spacing: 2px;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+        
+        #code-display {
+            font-size: 48px;
+            letter-spacing: 15px;
+            margin-bottom: 30px;
+            min-height: 60px;
+            color: #00ff00;
+            text-shadow: 0 0 20px #00ff00;
+        }
+        
+        #keypad {
+            display: grid;
+            grid-template-columns: repeat(3, 70px);
+            gap: 10px;
+            pointer-events: auto;
+        }
+        
+        .key-btn {
+            width: 70px;
+            height: 70px;
+            background: transparent;
+            border: 1px solid #00ff00;
+            color: #00ff00;
+            font-family: 'Courier New', monospace;
+            font-size: 24px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .key-btn:active {
+            background: #00ff00;
+            color: #000;
+        }
+        
+        #minigame-hint {
+            margin-top: 30px;
+            font-size: 11px;
+            opacity: 0.5;
+            text-align: center;
+        }
+        
+        /* Экран успеха */
+        #success-screen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.95);
+            z-index: 200;
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        
+        #success-icon {
+            font-size: 60px;
+            margin-bottom: 20px;
+            animation: pulse 1s ease-in-out infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.7; transform: scale(1.1); }
+        }
+        
+        #success-title {
+            font-size: 18px;
+            margin-bottom: 15px;
+        }
+        
+        #success-message {
+            font-size: 12px;
+            text-align: center;
+            line-height: 1.6;
+            max-width: 300px;
+            opacity: 0.8;
+        }
+        
+        #downloaded-files {
+            margin-top: 20px;
+            padding: 15px;
+            border: 1px solid #00ff00;
+            font-size: 11px;
+            text-align: left;
+            width: 100%;
+            max-width: 300px;
+        }
+        
+        .file-item {
+            margin: 5px 0;
+            opacity: 0;
+            animation: fadeIn 0.5s forwards;
+        }
+        
+        @keyframes fadeIn {
+            to { opacity: 1; }
+        }
+        
+        #return-btn {
+            margin-top: 30px;
+            padding: 15px 40px;
+            background: transparent;
+            border: 1px solid #00ff00;
+            color: #00ff00;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            cursor: pointer;
+            pointer-events: auto;
+        }
+        
+        #return-btn:active {
+            background: #00ff00;
+            color: #000;
+        }
+        
+        /* Экран загрузки/ошибки */
+        #loading-screen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #000;
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            transition: opacity 0.3s;
+        }
+        
+        #loading-screen.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+        
+        #loading-text {
+            font-size: 14px;
+            text-align: center;
+            line-height: 1.6;
+        }
+        
+        #loading-spinner {
+            width: 40px;
+            height: 40px;
+            border: 2px solid #00ff00;
+            border-top-color: transparent;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 20px;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        #error-btn {
+            margin-top: 20px;
+            padding: 12px 30px;
+            background: transparent;
+            border: 1px solid #00ff00;
+            color: #00ff00;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            cursor: pointer;
+            display: none;
+        }
+        
+        /* Мерцающий текст */
+        .blink {
+            animation: blink 1s step-end infinite;
+        }
+        
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0; }
+        }
+        
+        /* Случайные "обнаруженные" данные на экране */
+        .floating-data {
+            position: absolute;
+            font-size: 10px;
+            opacity: 0.3;
+            pointer-events: none;
+            white-space: nowrap;
+        }
+    </style>
+</head>
+<body>
+    <!-- Экран загрузки -->
+    <div id="loading-screen">
+        <div id="loading-spinner"></div>
+        <div id="loading-text">ИНИЦИАЛИЗАЦИЯ СКАНЕРА...</div>
+        <button id="error-btn" onclick="location.reload()">ПОВТОРИТЬ</button>
+    </div>
+
+    <!-- Камера -->
+    <div id="camera-container">
+        <video id="video" autoplay playsinline muted></video>
+    </div>
+    
+    <!-- AR-наложение (canvas для рисования объектов) -->
+    <canvas id="ar-overlay"></canvas>
+    
+    <!-- Эффекты -->
+    <div id="scanlines"></div>
+    <div id="noise"></div>
+    
+    <!-- Интерфейс сканера -->
+    <div id="scanner-ui">
+        <div id="top-panel">
+            <div id="scanner-title">▸ NOAH SCANNER v.13 [НЕЛИЦЕНЗИРОВАННАЯ КОПИЯ]</div>
+            <div id="status-line">СТАТУС: <span id="status-text">СКАНИРОВАНИЕ...</span></div>
+        </div>
+        <div id="bottom-panel">
+            <div id="instructions">Наведите камеру на пространство вокруг вас<br>Сканер обнаружит скрытые узлы NOAH</div>
+        </div>
+    </div>
+    
+    <!-- Прицел -->
+    <div id="crosshair">
+        <div class="crosshair-corner tl"></div>
+        <div class="crosshair-corner tr"></div>
+        <div class="crosshair-corner bl"></div>
+        <div class="crosshair-corner br"></div>
+    </div>
+    
+    <!-- Прогресс захвата -->
+    <div id="capture-progress">
+        <div id="capture-progress-fill"></div>
+    </div>
+    
+    <!-- Экран мини-игры -->
+    <div id="minigame-screen">
+        <div id="minigame-title">▸ УЗЕЛ ЗАХВАЧЕН ▸ ТРЕБУЕТСЯ КОД ДОСТУПА</div>
+        <div id="code-display">_ _ _</div>
+        <div id="keypad">
+            <button class="key-btn" data-key="1">1</button>
+            <button class="key-btn" data-key="2">2</button>
+            <button class="key-btn" data-key="3">3</button>
+            <button class="key-btn" data-key="4">4</button>
+            <button class="key-btn" data-key="5">5</button>
+            <button class="key-btn" data-key="6">6</button>
+            <button class="key-btn" data-key="7">7</button>
+            <button class="key-btn" data-key="8">8</button>
+            <button class="key-btn" data-key="9">9</button>
+            <button class="key-btn" data-key="C">⌫</button>
+            <button class="key-btn" data-key="0">0</button>
+            <button class="key-btn" data-key="OK">↵</button>
+        </div>
+        <div id="minigame-hint">Подсказка: "код от квартиры"</div>
+    </div>
+    
+    <!-- Экран успеха -->
+    <div id="success-screen">
+        <div id="success-icon">◈</div>
+        <div id="success-title">ВЗЛОМ УСПЕШЕН</div>
+        <div id="success-message">Соединение установлено.<br>Загрузка данных из узла NOAH...</div>
+        <div id="downloaded-files">
+            <div class="file-item" style="animation-delay: 0.5s">▸ NOAH_TECH_OVERVIEW.pdf</div>
+            <div class="file-item" style="animation-delay: 1s">▸ SUBJECT_LIST_FRAGMENT.json</div>
+            <div class="file-item" style="animation-delay: 1.5s">▸ AUDIO_BACKUP_731.mp3</div>
+        </div>
+        <button id="return-btn">ВЕРНУТЬСЯ В ЧАТ</button>
+    </div>
+
+    <script>
+        // ============================================
+        // КОНФИГУРАЦИЯ
+        // ============================================
+        const CONFIG = {
+            // Правильный код для мини-игры
+            correctCode: '731',
+            
+            // Время до появления первого узла (мс)
+            nodeAppearDelay: 3000,
+            
+            // Время удержания для захвата узла (мс)
+            captureTime: 2000,
+            
+            // Интервал появления "плавающих данных"
+            floatingDataInterval: 2000,
+            
+            // Данные для отправки боту после успеха
+            successData: {
+                action: 'noah_hack_complete',
+                chapter: 4,
+                filesFound: ['NOAH_TECH_OVERVIEW.pdf', 'SUBJECT_LIST_FRAGMENT.json', 'AUDIO_BACKUP_731.mp3']
+            }
+        };
+
+        // ============================================
+        // СОСТОЯНИЕ ПРИЛОЖЕНИЯ
+        // ============================================
+        const state = {
+            phase: 'loading', // loading, scanning, capturing, minigame, success
+            nodeVisible: false,
+            nodePosition: { x: 0, y: 0 },
+            captureProgress: 0,
+            enteredCode: '',
+            gyro: { alpha: 0, beta: 0, gamma: 0 }
+        };
+
+        // ============================================
+        // DOM-ЭЛЕМЕНТЫ
+        // ============================================
+        const elements = {
+            loadingScreen: document.getElementById('loading-screen'),
+            loadingText: document.getElementById('loading-text'),
+            errorBtn: document.getElementById('error-btn'),
+            video: document.getElementById('video'),
+            arOverlay: document.getElementById('ar-overlay'),
+            statusText: document.getElementById('status-text'),
+            instructions: document.getElementById('instructions'),
+            crosshair: document.getElementById('crosshair'),
+            captureProgress: document.getElementById('capture-progress'),
+            captureProgressFill: document.getElementById('capture-progress-fill'),
+            minigameScreen: document.getElementById('minigame-screen'),
+            codeDisplay: document.getElementById('code-display'),
+            successScreen: document.getElementById('success-screen'),
+            returnBtn: document.getElementById('return-btn')
+        };
+
+        // Canvas context для AR
+        const ctx = elements.arOverlay.getContext('2d');
+
+        // ============================================
+        // ИНИЦИАЛИЗАЦИЯ TELEGRAM WEB APP
+        // ============================================
+        const tg = window.Telegram?.WebApp;
+        
+        if (tg) {
+            // Раскрываем приложение на весь экран
+            tg.expand();
+            
+            // Устанавливаем цвет хедера
+            tg.setHeaderColor('#000000');
+            tg.setBackgroundColor('#000000');
+        }
+
+        // ============================================
+        // ИНИЦИАЛИЗАЦИЯ КАМЕРЫ
+        // ============================================
+        async function initCamera() {
+            try {
+                elements.loadingText.textContent = 'ЗАПРОС ДОСТУПА К КАМЕРЕ...';
+                
+                // Пробуем заднюю камеру, если не получится - любую
+                let stream;
+                try {
+                    stream = await navigator.mediaDevices.getUserMedia({
+                        video: {
+                            facingMode: 'environment',
+                            width: { ideal: 1280 },
+                            height: { ideal: 720 }
+                        },
+                        audio: false
+                    });
+                } catch (e) {
+                    console.log('Задняя камера недоступна, пробуем любую:', e);
+                    stream = await navigator.mediaDevices.getUserMedia({
+                        video: true,
+                        audio: false
+                    });
+                }
+                
+                elements.loadingText.textContent = 'ПОДКЛЮЧЕНИЕ К КАМЕРЕ...';
+                
+                elements.video.srcObject = stream;
+                elements.video.setAttribute('autoplay', '');
+                elements.video.setAttribute('playsinline', '');
+                elements.video.setAttribute('muted', '');
+                
+                // Явно запускаем воспроизведение
+                try {
+                    await elements.video.play();
+                } catch (playError) {
+                    console.log('Автовоспроизведение заблокировано, ждём взаимодействия:', playError);
+                }
+                
+                // Ждём, пока видео реально начнёт воспроизводиться
+                await new Promise((resolve, reject) => {
+                    const timeout = setTimeout(() => {
+                        reject(new Error('Таймаут загрузки видео'));
+                    }, 10000);
+                    
+                    const checkVideo = () => {
+                        if (elements.video.readyState >= 2 && elements.video.videoWidth > 0) {
+                            clearTimeout(timeout);
+                            resolve();
+                        } else {
+                            requestAnimationFrame(checkVideo);
+                        }
+                    };
+                    
+                    elements.video.onloadeddata = () => {
+                        clearTimeout(timeout);
+                        resolve();
+                    };
+                    
+                    // Запускаем проверку параллельно
+                    checkVideo();
+                });
+                
+                console.log('Видео готово:', elements.video.videoWidth, 'x', elements.video.videoHeight);
+                
+                // Настраиваем размер canvas под видео
+                resizeCanvas();
+                window.addEventListener('resize', resizeCanvas);
+                
+                // Запускаем сканирование
+                elements.loadingText.textContent = 'КАЛИБРОВКА СКАНЕРА...';
+                
+                setTimeout(() => {
+                    elements.loadingScreen.classList.add('hidden');
+                    setTimeout(() => {
+                        elements.loadingScreen.style.display = 'none';
+                    }, 300);
+                    state.phase = 'scanning';
+                    startScanning();
+                }, 1500);
+                
+            } catch (error) {
+                console.error('Ошибка камеры:', error);
+                elements.loadingText.innerHTML = `ОШИБКА: ${error.message || 'Нет доступа к камере'}<br><br><span style="font-size:11px;opacity:0.7">Разрешите доступ к камере<br>для работы сканера</span>`;
+                elements.errorBtn.style.display = 'block';
+            }
+        }
+
+        // ============================================
+        // НАСТРОЙКА CANVAS
+        // ============================================
+        function resizeCanvas() {
+            elements.arOverlay.width = window.innerWidth;
+            elements.arOverlay.height = window.innerHeight;
+        }
+
+        // ============================================
+        // ИНИЦИАЛИЗАЦИЯ ГИРОСКОПА
+        // ============================================
+        function initGyroscope() {
+            if (window.DeviceOrientationEvent) {
+                // Запрос разрешения для iOS 13+
+                if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+                    // Разрешение будет запрошено при первом касании
+                    document.body.addEventListener('click', async () => {
+                        try {
+                            const permission = await DeviceOrientationEvent.requestPermission();
+                            if (permission === 'granted') {
+                                window.addEventListener('deviceorientation', handleOrientation);
+                            }
+                        } catch (e) {
+                            console.log('Гироскоп недоступен');
+                        }
+                    }, { once: true });
+                } else {
+                    window.addEventListener('deviceorientation', handleOrientation);
+                }
+            }
+        }
+
+        function handleOrientation(event) {
+            state.gyro.alpha = event.alpha || 0;
+            state.gyro.beta = event.beta || 0;
+            state.gyro.gamma = event.gamma || 0;
+        }
+
+        // ============================================
+        // ОСНОВНОЙ ЦИКЛ СКАНИРОВАНИЯ
+        // ============================================
+        function startScanning() {
+            console.log('Сканирование запущено, phase:', state.phase);
+            
+            // Запускаем появление "плавающих данных"
+            setInterval(spawnFloatingData, CONFIG.floatingDataInterval);
+            
+            // Планируем появление узла NOAH
+            setTimeout(showNoahNode, CONFIG.nodeAppearDelay);
+            
+            // Запускаем цикл отрисовки
+            requestAnimationFrame(renderLoop);
+            
+            // Обработка касаний для захвата
+            document.addEventListener('touchstart', handleTouchStart);
+            document.addEventListener('touchend', handleTouchEnd);
+            document.addEventListener('mousedown', handleTouchStart);
+            document.addEventListener('mouseup', handleTouchEnd);
+            
+            console.log('Все обработчики установлены');
+        }
+
+        // ============================================
+        // ПОЯВЛЕНИЕ УЗЛА NOAH
+        // ============================================
+        function showNoahNode() {
+            if (state.phase !== 'scanning') return;
+            
+            // Случайная позиция (но ближе к центру)
+            const margin = 100;
+            state.nodePosition = {
+                x: margin + Math.random() * (window.innerWidth - margin * 2),
+                y: margin + Math.random() * (window.innerHeight - margin * 2)
+            };
+            
+            state.nodeVisible = true;
+            elements.statusText.textContent = 'УЗЕЛ ОБНАРУЖЕН';
+            elements.statusText.classList.add('blink');
+            elements.instructions.textContent = 'Узел найден! Удерживайте его в центре экрана';
+            
+            // Добавляем глитч-эффект при появлении
+            document.body.classList.add('glitch');
+            setTimeout(() => document.body.classList.remove('glitch'), 300);
+        }
+
+        // ============================================
+        // ЦИКЛ ОТРИСОВКИ
+        // ============================================
+        function renderLoop() {
+            if (state.phase === 'success') return;
+            
+            // Очищаем canvas
+            ctx.clearRect(0, 0, elements.arOverlay.width, elements.arOverlay.height);
+            
+            // Рисуем узел NOAH, если он видим
+            if (state.nodeVisible && state.phase !== 'minigame') {
+                drawNoahNode();
+            }
+            
+            // Рисуем "помехи" случайно
+            if (Math.random() < 0.02) {
+                drawGlitch();
+            }
+            
+            requestAnimationFrame(renderLoop);
+        }
+
+        // ============================================
+        // ОТРИСОВКА УЗЛА NOAH
+        // ============================================
+        function drawNoahNode() {
+            const { x, y } = state.nodePosition;
+            const time = Date.now() / 1000;
+            
+            // Анимация "дыхания" и покачивания
+            const breathe = Math.sin(time * 2) * 5;
+            const wobbleX = Math.sin(time * 1.5) * 3;
+            const wobbleY = Math.cos(time * 1.3) * 3;
+            
+            const drawX = x + wobbleX;
+            const drawY = y + wobbleY;
+            const size = 60 + breathe;
+            
+            ctx.save();
+            ctx.translate(drawX, drawY);
+            
+            // Свечение
+            const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, size);
+            gradient.addColorStop(0, 'rgba(0, 255, 0, 0.3)');
+            gradient.addColorStop(1, 'rgba(0, 255, 0, 0)');
+            ctx.fillStyle = gradient;
+            ctx.beginPath();
+            ctx.arc(0, 0, size, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Треугольник с глазом (символ)
+            ctx.strokeStyle = '#00ff00';
+            ctx.lineWidth = 2;
+            ctx.shadowColor = '#00ff00';
+            ctx.shadowBlur = 15;
+            
+            // Внешний треугольник
+            const triSize = size * 0.6;
+            ctx.beginPath();
+            ctx.moveTo(0, -triSize);
+            ctx.lineTo(-triSize * 0.866, triSize * 0.5);
+            ctx.lineTo(triSize * 0.866, triSize * 0.5);
+            ctx.closePath();
+            ctx.stroke();
+            
+            // Внутренний круг (глаз)
+            ctx.beginPath();
+            ctx.arc(0, triSize * 0.1, triSize * 0.25, 0, Math.PI * 2);
+            ctx.stroke();
+            
+            // Зрачок
+            ctx.fillStyle = '#00ff00';
+            ctx.beginPath();
+            ctx.arc(0, triSize * 0.1, triSize * 0.1, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Текст "NOAH"
+            ctx.font = '10px Courier New';
+            ctx.fillStyle = '#00ff00';
+            ctx.textAlign = 'center';
+            ctx.fillText('NOAH-782', 0, triSize + 15);
+            
+            ctx.restore();
+            
+            // Сохраняем актуальную позицию для проверки захвата
+            state.nodePosition.renderX = drawX;
+            state.nodePosition.renderY = drawY;
+            state.nodePosition.size = size;
+        }
+
+        // ============================================
+        // РИСОВАНИЕ ГЛИТЧЕЙ
+        // ============================================
+        function drawGlitch() {
+            const y = Math.random() * elements.arOverlay.height;
+            const height = 2 + Math.random() * 10;
+            
+            ctx.fillStyle = `rgba(0, 255, 0, ${0.1 + Math.random() * 0.2})`;
+            ctx.fillRect(0, y, elements.arOverlay.width, height);
+        }
+
+        // ============================================
+        // "ПЛАВАЮЩИЕ ДАННЫЕ" НА ЭКРАНЕ
+        // ============================================
+        function spawnFloatingData() {
+            if (state.phase !== 'scanning' && state.phase !== 'capturing') return;
+            
+            const dataStrings = [
+                'FREQ: 731.00 Hz',
+                'SIGNAL: ACTIVE',
+                'NODE: #782',
+                'ENCRYPT: AES-256',
+                'STATUS: MONITORED',
+                'LAT: [REDACTED]',
+                'PROTOCOL: RESONANCE',
+                'CARRIER: 4.7 Hz',
+                'SUBJECT: UNKNOWN',
+                'BUFFER: OVERFLOW',
+                '0x7F3A2D1E',
+                'AUTH: DENIED',
+                'TRACE: ENABLED'
+            ];
+            
+            const div = document.createElement('div');
+            div.className = 'floating-data';
+            div.textContent = dataStrings[Math.floor(Math.random() * dataStrings.length)];
+            div.style.left = Math.random() * (window.innerWidth - 100) + 'px';
+            div.style.top = Math.random() * (window.innerHeight - 50) + 'px';
+            document.body.appendChild(div);
+            
+            // Удаляем через 3 секунды
+            setTimeout(() => div.remove(), 3000);
+        }
+
+        // ============================================
+        // ОБРАБОТКА КАСАНИЙ (ЗАХВАТ УЗЛА)
+        // ============================================
+        let captureInterval = null;
+
+        function handleTouchStart(e) {
+            if (state.phase === 'minigame' || state.phase === 'success') return;
+            if (!state.nodeVisible) return;
+            
+            // Проверяем, попадает ли касание в область узла
+            const touch = e.touches ? e.touches[0] : e;
+            const centerX = window.innerWidth / 2;
+            const centerY = window.innerHeight / 2;
+            
+            // Проверяем, находится ли узел близко к центру (прицелу)
+            const dx = state.nodePosition.renderX - centerX;
+            const dy = state.nodePosition.renderY - centerY;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            
+            if (dist < 80) {
+                // Начинаем захват
+                state.phase = 'capturing';
+                elements.captureProgress.style.opacity = '1';
+                
+                captureInterval = setInterval(() => {
+                    state.captureProgress += 100 / (CONFIG.captureTime / 100);
+                    elements.captureProgressFill.style.width = state.captureProgress + '%';
+                    
+                    if (state.captureProgress >= 100) {
+                        completeCapture();
+                    }
+                }, 100);
+            }
+        }
+
+        function handleTouchEnd(e) {
+            if (captureInterval) {
+                clearInterval(captureInterval);
+                captureInterval = null;
+            }
+            
+            if (state.phase === 'capturing') {
+                // Сбрасываем прогресс, если отпустили раньше времени
+                state.captureProgress = 0;
+                elements.captureProgressFill.style.width = '0%';
+                elements.captureProgress.style.opacity = '0';
+                state.phase = 'scanning';
+            }
+        }
+
+        // ============================================
+        // ЗАВЕРШЕНИЕ ЗАХВАТА → МИНИ-ИГРА
+        // ============================================
+        function completeCapture() {
+            clearInterval(captureInterval);
+            
+            state.phase = 'minigame';
+            state.nodeVisible = false;
+            elements.captureProgress.style.opacity = '0';
+            
+            // Глитч-эффект
+            document.body.classList.add('glitch');
+            setTimeout(() => document.body.classList.remove('glitch'), 500);
+            
+            // Показываем экран мини-игры
+            setTimeout(() => {
+                elements.minigameScreen.style.display = 'flex';
+                initMinigame();
+            }, 500);
+        }
+
+        // ============================================
+        // МИНИ-ИГРА: ВВОД КОДА
+        // ============================================
+        function initMinigame() {
+            state.enteredCode = '';
+            updateCodeDisplay();
+            
+            // Обработчики кнопок
+            document.querySelectorAll('.key-btn').forEach(btn => {
+                btn.addEventListener('click', handleKeyPress);
+            });
+        }
+
+        function handleKeyPress(e) {
+            const key = e.target.dataset.key;
+            
+            // Вибрация при нажатии (если поддерживается)
+            if (navigator.vibrate) {
+                navigator.vibrate(30);
+            }
+            
+            if (key === 'C') {
+                // Стереть последний символ
+                state.enteredCode = state.enteredCode.slice(0, -1);
+            } else if (key === 'OK') {
+                // Проверить код
+                checkCode();
+            } else if (state.enteredCode.length < 3) {
+                // Добавить цифру
+                state.enteredCode += key;
+            }
+            
+            updateCodeDisplay();
+        }
+
+        function updateCodeDisplay() {
+            let display = '';
+            for (let i = 0; i < 3; i++) {
+                if (state.enteredCode[i]) {
+                    display += state.enteredCode[i] + ' ';
+                } else {
+                    display += '_ ';
+                }
+            }
+            elements.codeDisplay.textContent = display.trim();
+        }
+
+        function checkCode() {
+            if (state.enteredCode === CONFIG.correctCode) {
+                // Успех!
+                showSuccess();
+            } else {
+                // Ошибка - показываем визуально
+                elements.codeDisplay.style.color = '#ff0000';
+                elements.codeDisplay.style.textShadow = '0 0 20px #ff0000';
+                
+                if (navigator.vibrate) {
+                    navigator.vibrate([100, 50, 100]);
+                }
+                
+                setTimeout(() => {
+                    state.enteredCode = '';
+                    updateCodeDisplay();
+                    elements.codeDisplay.style.color = '#00ff00';
+                    elements.codeDisplay.style.textShadow = '0 0 20px #00ff00';
+                }, 500);
+            }
+        }
+
+        // ============================================
+        // ЭКРАН УСПЕХА
+        // ============================================
+        function showSuccess() {
+            state.phase = 'success';
+            elements.minigameScreen.style.display = 'none';
+            elements.successScreen.style.display = 'flex';
+            
+            // Сильная вибрация при успехе
+            if (navigator.vibrate) {
+                navigator.vibrate([100, 100, 100, 100, 200]);
+            }
+            
+            // Кнопка возврата
+            elements.returnBtn.addEventListener('click', returnToChat);
+        }
+
+        // ============================================
+        // ВОЗВРАТ В TELEGRAM
+        // ============================================
+        function returnToChat() {
+            if (tg) {
+                // Отправляем данные боту
+                tg.sendData(JSON.stringify(CONFIG.successData));
+                
+                // Закрываем приложение
+                tg.close();
+            } else {
+                // Если не в Telegram - просто показываем сообщение
+                alert('Данные получены! В реальном боте здесь будет возврат в чат.');
+            }
+        }
+
+        // ============================================
+        // ЗАПУСК
+        // ============================================
+        document.addEventListener('DOMContentLoaded', () => {
+            initGyroscope();
+            initCamera();
+        });
+    </script>
+</body>
+</html>
